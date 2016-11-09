@@ -31,8 +31,26 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdlib.h>
 #include <string.h>
 
+#include <unistd.h>
+#include <sys/select.h>
+
 #include "bcm_host.h"
 #include "ilclient.h"
+
+
+   char next_filename[256];
+
+int inputAvailable()
+{
+  struct timeval tv;
+  fd_set fds;
+  tv.tv_sec = 0;
+  tv.tv_usec = 0;
+  FD_ZERO(&fds);
+  FD_SET(STDIN_FILENO, &fds);
+  select(STDIN_FILENO+1, &fds, NULL, NULL, &tv);
+  return (FD_ISSET(0, &fds));
+}
 
 static int video_decode_test(char *filename, int loop)
 {
@@ -45,12 +63,21 @@ static int video_decode_test(char *filename, int loop)
    FILE *in;
    int status = 0;
    unsigned int data_len = 0;
+   unsigned int readsize = 0;
+   unsigned int filesize = 0;
+   unsigned int stdin_len = 0;
+   char stdin_buffer[256];
+   int done_once = 0;
 
+   memset(stdin_buffer, 0, sizeof(stdin_buffer));
    memset(list, 0, sizeof(list));
    memset(tunnel, 0, sizeof(tunnel));
 
    if((in = fopen(filename, "rb")) == NULL)
+   {
+      printf("fopen filename: %s\nerror: %s\n", filename, strerror(errno));
       return -2;
+   }
 
    if((client = ilclient_init()) == NULL)
    {
@@ -122,79 +149,194 @@ static int video_decode_test(char *filename, int loop)
 
       ilclient_change_component_state(video_decode, OMX_StateExecuting);
 
-      while((buf = ilclient_get_input_buffer(video_decode, 130, 1)) != NULL)
+      fseek(in, 0L, SEEK_END);
+      filesize = ftell(in);
+      fseek(in, 0L, SEEK_SET);
+
+      for(;;)
       {
-         // feed data and wait until we get port settings changed
-         unsigned char *dest = buf->pBuffer;
-
-         data_len += fread(dest, 1, buf->nAllocLen-data_len, in);
-
-         if(port_settings_changed == 0 &&
-            ((data_len > 0 && ilclient_remove_event(video_decode, OMX_EventPortSettingsChanged, 131, 0, 0, 1) == 0) ||
-             (data_len == 0 && ilclient_wait_for_event(video_decode, OMX_EventPortSettingsChanged, 131, 0, 0, 1,
-                                                       ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 10000) == 0)))
+         // printf("=========================> 1\n");
+         if(inputAvailable())
          {
-            port_settings_changed = 1;
-
-            if(ilclient_setup_tunnel(tunnel, 0, 0) != 0)
+            char c = 0;
+            int i = stdin_len = 0;
+            for (i = 0; (c = getchar()) != '\n' && c != EOF && i < 255; ++i)
             {
-               status = -7;
-               break;
+               stdin_buffer[i] = c;
+               stdin_len = i+1;
             }
+            stdin_buffer[stdin_len] = 0;
+            printf("input available: %s\r\n", stdin_buffer);
 
-            ilclient_change_component_state(video_scheduler, OMX_StateExecuting);
-
-            // now setup tunnel to video_render
-            if(ilclient_setup_tunnel(tunnel+1, 0, 1000) != 0)
+            if(stdin_buffer[0] == 'q' || stdin_buffer[0] == 'Q')
             {
-               status = -12;
+               printf("QUIT!\r\n");
                break;
             }
+            else if(stdin_buffer[0] == 'f' || stdin_buffer[0] == 'F')
+            {
+               for(i = stdin_len-1; i>=0 && (stdin_buffer[i] == '\r' || stdin_buffer[i] == '\n'); i--)
+               {
+                  stdin_buffer[i] = 0;
+               }
+               int begin = 1;
+               for (i = begin; i < stdin_len && stdin_buffer[i] == ' '; ++i)
+               {
+                  begin = i+1;
+               }
+               memset(next_filename, 0, sizeof(next_filename));
+               strcpy(next_filename, &stdin_buffer[begin]);
+               if(strlen(next_filename) > 0)
+               {
+                  status = 42; //play next video
+                  break;
+                  // int errorCode;
+                  // OMX_SendCommand(ILC_GET_HANDLE(video_decode),OMX_CommandFlush,130,NULL);
+                  // OMX_SendCommand(ILC_GET_HANDLE(video_decode),OMX_CommandFlush,131,NULL);
+                  // ilclient_wait_for_event(video_decode, OMX_EventCmdComplete, OMX_CommandFlush, 0, 130, 0, ILCLIENT_PORT_FLUSH, -1);
+                  // ilclient_wait_for_event(video_decode, OMX_EventCmdComplete, OMX_CommandFlush, 0, 131, 0, ILCLIENT_PORT_FLUSH, -1);
 
-            ilclient_change_component_state(video_render, OMX_StateExecuting);
-         }
-         if(!data_len) {
-            // Finished reading the file, either loop or exit.
-            if (loop) {
-               fseek(in, 0, SEEK_SET);
+                  // data_len=0;
+
+                  // memset(&cstate, 0, sizeof(cstate));
+                  // cstate.nSize = sizeof(cstate);
+                  // cstate.nVersion.nVersion = OMX_VERSION;
+                  // cstate.eState = OMX_TIME_ClockStateStopped;
+                  // cstate.nWaitMask = 1;
+                  // errorCode = OMX_SetParameter(ILC_GET_HANDLE(clock), OMX_IndexConfigTimeClockState, &cstate);
+
+                  // if(errorCode)
+                  // {
+                  //    printf("OMX_TIME_ClockStateStopped errorCode: %d\n", errorCode);
+                  //    // fprintf(stderr, "OMX_TIME_ClockStateStopped errorCode: %d\n", errorCode);
+                  //    return errorCode;
+                  // }
+
+                  // memset(&cstate, 0, sizeof(cstate));
+                  // cstate.nSize = sizeof(cstate);
+                  // cstate.nVersion.nVersion = OMX_VERSION;
+                  // cstate.eState = OMX_TIME_ClockStateWaitingForStartTime;
+                  // cstate.nWaitMask = 1;
+                  // errorCode = OMX_SetParameter(ILC_GET_HANDLE(clock), OMX_IndexConfigTimeClockState, &cstate);
+
+                  // if(errorCode)
+                  // {
+                  //    printf("OMX_TIME_ClockStateWaitingForStartTime errorCode: %d\n", errorCode);
+                  //    // fprintf(stderr, "OMX_TIME_ClockStateWaitingForStartTime errorCode: %d\n", errorCode);
+                  //    return errorCode;
+                  // }
+
+                  // ilclient_change_component_state(clock, OMX_StateExecuting);
+                  // first_packet = 1;
+
+                  // fclose(in);
+                  // if((in = fopen(next_filename, "rb")) == NULL)
+                  // {
+                  //    printf("fopen filename: %s\nerror: %s\n", next_filename, strerror(errno));
+                  //    //perror("fopen next_filename");
+                  //    return -2;
+                  // }
+                  // memset(next_filename, 0, sizeof(next_filename));
+                  // done_once = 0;
+                  // readsize = 0;
+
+                  // ilclient_change_component_state(video_decode, OMX_StateExecuting);
+
+                  // fseek(in, 0L, SEEK_END);
+                  // filesize = ftell(in);
+                  // fseek(in, 0L, SEEK_SET);
+               }
             }
-            else {
+         }
+         if(!done_once && (buf = ilclient_get_input_buffer(video_decode, 130, 1)) != NULL)
+         {
+            // feed data and wait until we get port settings changed
+            unsigned char *dest = buf->pBuffer;
+            data_len += fread(dest, 1, buf->nAllocLen-data_len, in);
+
+            if(port_settings_changed == 0 &&
+               ((data_len > 0 && ilclient_remove_event(video_decode, OMX_EventPortSettingsChanged, 131, 0, 0, 1) == 0) ||
+                (data_len == 0 && ilclient_wait_for_event(video_decode, OMX_EventPortSettingsChanged, 131, 0, 0, 1,
+                                                          ILCLIENT_EVENT_ERROR | ILCLIENT_PARAMETER_CHANGED, 10000) == 0)))
+            {
+               port_settings_changed = 1;
+               if(ilclient_setup_tunnel(tunnel, 0, 0) != 0)
+               {
+                  status = -7;
+                  break;
+               }
+
+               ilclient_change_component_state(video_scheduler, OMX_StateExecuting);
+               // now setup tunnel to video_render
+               if(ilclient_setup_tunnel(tunnel+1, 0, 1000) != 0)
+               {
+                  status = -12;
+                  break;
+               }
+
+               ilclient_change_component_state(video_render, OMX_StateExecuting);
+            }
+            if(!data_len) {
+               // Finished reading the file, either loop or exit.
+               if (loop) {
+                  fseek(in, 0, SEEK_SET);
+               }
+               else {
+                  if(!done_once)
+                  {
+                     printf("done!\r\n");
+                     done_once = 1;
+                  }
+                  //break;
+                  usleep(1000);
+                  continue;
+               }
+            }
+
+            buf->nFilledLen = data_len;
+            readsize += data_len;
+            data_len = 0;
+
+            printf("%0.04f\r\n", (filesize == 0 ? 0 : (readsize / (float) filesize) * 100));
+
+            buf->nOffset = 0;
+            if(first_packet)
+            {
+               buf->nFlags = OMX_BUFFERFLAG_STARTTIME;
+               first_packet = 0;
+            }
+            else
+               buf->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN;
+
+            if(OMX_EmptyThisBuffer(ILC_GET_HANDLE(video_decode), buf) != OMX_ErrorNone)
+            {
+               status = -6;
                break;
             }
          }
-
-         buf->nFilledLen = data_len;
-         data_len = 0;
-
-         buf->nOffset = 0;
-         if(first_packet)
-         {
-            buf->nFlags = OMX_BUFFERFLAG_STARTTIME;
-            first_packet = 0;
-         }
-         else
-            buf->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN;
-
-         if(OMX_EmptyThisBuffer(ILC_GET_HANDLE(video_decode), buf) != OMX_ErrorNone)
-         {
-            status = -6;
-            break;
-         }
+         // else
+         // {
+         //    printf("ilclient_get_input_buffer false!\r\n");
+         // }
       }
 
       buf->nFilledLen = 0;
       buf->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN | OMX_BUFFERFLAG_EOS;
 
+printf("=========================> 1\n");
       if(OMX_EmptyThisBuffer(ILC_GET_HANDLE(video_decode), buf) != OMX_ErrorNone)
          status = -20;
 
+printf("=========================> 2\n");
       // wait for EOS from render
       ilclient_wait_for_event(video_render, OMX_EventBufferFlag, 90, 0, OMX_BUFFERFLAG_EOS, 0,
                               ILCLIENT_BUFFER_FLAG_EOS, 10000);
 
+printf("=========================> 3\n");
       // need to flush the renderer to allow video_decode to disable its input port
       ilclient_flush_tunnels(tunnel, 0);
 
+printf("=========================> 4\n");
       ilclient_disable_port_buffers(video_decode, 130, NULL, NULL, NULL);
    }
 
@@ -240,7 +382,12 @@ int main (int argc, char **argv)
       }
    }
    bcm_host_init();
-   return video_decode_test(argv[argc-1], loop);
+   int result = 0;
+   memset(next_filename, 0, sizeof(next_filename));
+   strcpy(next_filename, argv[argc-1]);
+   printf("argv[%d]: %s\nnext_filename: %s\n", argc-1, argv[argc-1], next_filename);
+   while((result = video_decode_test(next_filename, loop)) == 42);
+   return result;
 }
 
 
