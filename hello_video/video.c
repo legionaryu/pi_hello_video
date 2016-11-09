@@ -78,6 +78,7 @@ static int video_decode_test(char *filename, int loop)
       printf("fopen filename: %s\nerror: %s\n", filename, strerror(errno));
       return -2;
    }
+   memset(next_filename, 0, sizeof(next_filename));
 
    if((client = ilclient_init()) == NULL)
    {
@@ -189,7 +190,8 @@ static int video_decode_test(char *filename, int loop)
                if(strlen(next_filename) > 0)
                {
                   status = 42; //play next video
-                  break;
+                  //break;
+                  //++++++++++++++++++++++++++++++++++++++++++++++++
                   // int errorCode;
                   // OMX_SendCommand(ILC_GET_HANDLE(video_decode),OMX_CommandFlush,130,NULL);
                   // OMX_SendCommand(ILC_GET_HANDLE(video_decode),OMX_CommandFlush,131,NULL);
@@ -287,9 +289,32 @@ static int video_decode_test(char *filename, int loop)
                      printf("done!\r\n");
                      done_once = 1;
                   }
-                  //break;
-                  usleep(1000);
-                  continue;
+                  if(strlen(next_filename) > 0)
+                  {
+                     fclose(in);
+                     if((in = fopen(next_filename, "rb")) == NULL)
+                     {
+                        printf("fopen filename: %s\nerror: %s\n", next_filename, strerror(errno));
+                        //perror("fopen next_filename");
+                        status = -2;
+                        break;
+                     }
+                     memset(next_filename, 0, sizeof(next_filename));
+                     done_once = 0;
+                     readsize = 0;
+                     data_len = 0;
+
+                     fseek(in, 0L, SEEK_END);
+                     filesize = ftell(in);
+                     fseek(in, 0L, SEEK_SET);
+                  }
+                  else
+                  {
+                     status = 0;
+                     break;
+                  }
+                  // usleep(1000);
+                  // continue;
                }
             }
 
@@ -297,7 +322,7 @@ static int video_decode_test(char *filename, int loop)
             readsize += data_len;
             data_len = 0;
 
-            printf("%0.04f\r\n", (filesize == 0 ? 0 : (readsize / (float) filesize) * 100));
+            // printf("%0.04f\r\n", (filesize == 0 ? 0 : (readsize / (float) filesize) * 100));
 
             buf->nOffset = 0;
             if(first_packet)
@@ -323,20 +348,16 @@ static int video_decode_test(char *filename, int loop)
       buf->nFilledLen = 0;
       buf->nFlags = OMX_BUFFERFLAG_TIME_UNKNOWN | OMX_BUFFERFLAG_EOS;
 
-printf("=========================> 1\n");
       if(OMX_EmptyThisBuffer(ILC_GET_HANDLE(video_decode), buf) != OMX_ErrorNone)
          status = -20;
 
-printf("=========================> 2\n");
       // wait for EOS from render
       ilclient_wait_for_event(video_render, OMX_EventBufferFlag, 90, 0, OMX_BUFFERFLAG_EOS, 0,
                               ILCLIENT_BUFFER_FLAG_EOS, 10000);
 
-printf("=========================> 3\n");
       // need to flush the renderer to allow video_decode to disable its input port
       ilclient_flush_tunnels(tunnel, 0);
 
-printf("=========================> 4\n");
       ilclient_disable_port_buffers(video_decode, 130, NULL, NULL, NULL);
    }
 
@@ -385,9 +406,13 @@ int main (int argc, char **argv)
    int result = 0;
    memset(next_filename, 0, sizeof(next_filename));
    strcpy(next_filename, argv[argc-1]);
-   printf("argv[%d]: %s\nnext_filename: %s\n", argc-1, argv[argc-1], next_filename);
-   while((result = video_decode_test(next_filename, loop)) == 42);
-   return result;
+   return video_decode_test(next_filename, loop);
+   //printf("argv[%d]: %s\nnext_filename: %s\n", argc-1, argv[argc-1], next_filename);
+   // while((result = video_decode_test(next_filename, loop)) == 42)
+   // {
+   //    printf("video_decode_test result: %d\n", result);
+   // }
+   // return result;
 }
 
 
