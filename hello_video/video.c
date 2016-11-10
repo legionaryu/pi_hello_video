@@ -250,7 +250,8 @@ static int video_decode_test(char *filename, int loop)
                }
             }
          }
-         if(!done_once && (buf = ilclient_get_input_buffer(video_decode, 130, 1)) != NULL)
+         // if(!done_once && (buf = ilclient_get_input_buffer(video_decode, 130, 1)) != NULL)
+         if((buf = ilclient_get_input_buffer(video_decode, 130, 1)) != NULL)
          {
             // feed data and wait until we get port settings changed
             unsigned char *dest = buf->pBuffer;
@@ -284,31 +285,7 @@ static int video_decode_test(char *filename, int loop)
                   fseek(in, 0, SEEK_SET);
                }
                else {
-                  if(!done_once)
-                  {
-                     printf("done!\r\n");
-                     done_once = 1;
-                  }
-                  if(strlen(next_filename) > 0)
-                  {
-                     fclose(in);
-                     if((in = fopen(next_filename, "rb")) == NULL)
-                     {
-                        printf("fopen filename: %s\nerror: %s\n", next_filename, strerror(errno));
-                        //perror("fopen next_filename");
-                        status = -2;
-                        break;
-                     }
-                     memset(next_filename, 0, sizeof(next_filename));
-                     done_once = 0;
-                     readsize = 0;
-                     data_len = 0;
-
-                     fseek(in, 0L, SEEK_END);
-                     filesize = ftell(in);
-                     fseek(in, 0L, SEEK_SET);
-                  }
-                  else
+                  //else
                   {
                      status = 0;
                      break;
@@ -321,6 +298,34 @@ static int video_decode_test(char *filename, int loop)
             buf->nFilledLen = data_len;
             readsize += data_len;
             data_len = 0;
+
+            if(readsize >= filesize)
+            {
+               if(!done_once)
+               {
+                  printf("done!\r\n");
+                  done_once = 1;
+               }
+               if(strlen(next_filename) > 0)
+               {
+                  fclose(in);
+                  if((in = fopen(next_filename, "rb")) == NULL)
+                  {
+                     printf("fopen filename: %s\nerror: %s\n", next_filename, strerror(errno));
+                     //perror("fopen next_filename");
+                     status = -2;
+                     break;
+                  }
+                  memset(next_filename, 0, sizeof(next_filename));
+                  done_once = 0;
+                  readsize = 0;
+                  data_len = 0;
+
+                  fseek(in, 0L, SEEK_END);
+                  filesize = ftell(in);
+                  fseek(in, 0L, SEEK_SET);
+               }
+            }
 
             // printf("%0.04f\r\n", (filesize == 0 ? 0 : (readsize / (float) filesize) * 100));
 
@@ -339,10 +344,10 @@ static int video_decode_test(char *filename, int loop)
                break;
             }
          }
-         // else
-         // {
-         //    printf("ilclient_get_input_buffer false!\r\n");
-         // }
+         else
+         {
+            printf("ilclient_get_input_buffer false!\r\n");
+         }
       }
 
       buf->nFilledLen = 0;
@@ -387,7 +392,7 @@ void error_usage(char* name) {
 int main (int argc, char **argv)
 {
    int loop = 0;
-
+   setbuf(stdout, NULL);
    if (argc < 2 || argc > 3) {
       error_usage(argv[0]);
    }
@@ -403,10 +408,10 @@ int main (int argc, char **argv)
       }
    }
    bcm_host_init();
-   int result = 0;
    memset(next_filename, 0, sizeof(next_filename));
    strcpy(next_filename, argv[argc-1]);
    return video_decode_test(next_filename, loop);
+   //int result = 0;
    //printf("argv[%d]: %s\nnext_filename: %s\n", argc-1, argv[argc-1], next_filename);
    // while((result = video_decode_test(next_filename, loop)) == 42)
    // {
